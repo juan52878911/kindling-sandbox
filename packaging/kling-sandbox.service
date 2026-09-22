@@ -1,0 +1,30 @@
+[Unit]
+Description=kling sandbox gateway — sandboxes de agentes de código sobre microVMs
+Documentation=https://github.com/juan52878911/kindling-sandbox
+After=network-online.target kling.service
+Wants=network-online.target
+Requires=kling.service
+
+[Service]
+Type=simple
+# NO necesita root: habla con el daemon por su socket y hace de frontal HTTP.
+# Todo lo privilegiado vive en kling.service.
+User=juan
+Group=juan
+
+# El token va por entorno y no por flag: /proc/<pid>/cmdline lo lee cualquiera
+# del host, y un secreto no debe viajar por ahí. Lo genera `make deploy` una vez.
+EnvironmentFile=-/etc/kling/sandbox.env
+ExecStart=/usr/local/bin/kling-sandbox sbx gateway
+
+Restart=on-failure
+RestartSec=3
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

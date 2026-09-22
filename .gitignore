@@ -1,0 +1,5 @@
+/kling-sandbox
+/kling-sandbox-linux-*
+/dist/
+go.work
+go.work.sum
