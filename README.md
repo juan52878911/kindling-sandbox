@@ -47,7 +47,7 @@ kling sbx template apply -f node.json
 kling sbx new -template node -ttl 30m
 kling sbx ls
 kling sbx exec <id> -- tsc --version
-kling sbx shell <id>
+kling sbx shell <id>          # una terminal de verdad dentro
 kling sbx rm <id>
 
 kling sbx hosts       # qué daemons hay detrás y cuánto les queda

@@ -47,6 +47,17 @@ func cmdSbx(args []string) error {
 		return sbxExec(args[1:])
 	case "cp":
 		return sbxCp(args[1:])
+	case "shell":
+		// Termina con el código de la shell remota, sin el "error:" de siempre:
+		// un 1 de grep no es un fallo de kling.
+		code, err := sbxShell(args[1:])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			if code == 0 {
+				code = 1
+			}
+		}
+		os.Exit(code)
 	case "hosts":
 		return sbxHosts(args[1:])
 	case "-h", "--help", "help":
@@ -64,6 +75,7 @@ const ayuda = `kling sbx — sandboxes for code agents, served by a gateway
   sbx new -template T [-ttl 10m] [-q]          a sandbox from that template
   sbx ls | rm <id>... | renew <id> [-ttl D]    the ones you own
   sbx exec <id> [--] <cmd> [args...]           runs a command inside, streaming
+  sbx shell <id>                               an interactive terminal inside
   sbx cp <local|-> <id>:<path> | <id>:<path> <local|->
   sbx hosts                                    the daemons behind the gateway
 

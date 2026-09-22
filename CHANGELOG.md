@@ -21,6 +21,8 @@ autenticación, plantillas, inquilinos y varios hosts.
   frente a 683 ms creándola desde el snapshot.
 - **Varios hosts**: se elige por hueco libre y se reintenta en otro cuando uno
   dice que no cabe o que llegó a su tope de máquinas.
+- **`kling sbx shell`**: terminal interactiva dentro del sandbox a través del
+  gateway, con el mismo protocolo de tramas que `kling shell`.
 - **Passthrough de exec, ficheros y shell** hasta la microVM, en streaming y con
   las tramas validadas por dirección.
 - Los sandboxes nacen sin red y durmiéndose al vencer; un segundo plazo
