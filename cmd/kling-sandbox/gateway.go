@@ -124,8 +124,8 @@ func nombres(m map[string]string) []string {
 // config.json legible se copia sin querer. Es el mismo trato que da el gateway
 // de kindling-mcp a su token.
 //
-//	KLING_SANDBOX_TOKEN=xxx                      un inquilino "default", sin tope
-//	KLING_SANDBOX_TENANTS=ana:tok1:10,bob:tok2:5 nombre:token:máximo de sandboxes
+//	KLING_SANDBOX_TOKEN=xxx                              un inquilino "default", sin tope
+//	KLING_SANDBOX_TENANTS=ana:tok1:10:5,bob:tok2:5       nombre:token[:máximo de sandboxes[:máximo de shells]]
 func leerTenants() ([]frontal.Tenant, error) {
 	var out []frontal.Tenant
 	if v := os.Getenv("KLING_SANDBOX_TOKEN"); v != "" {
@@ -136,17 +136,27 @@ func leerTenants() ([]frontal.Tenant, error) {
 		if t == "" {
 			continue
 		}
+		// Formato aditivo: los campos viejos (nombre, token, máximo de
+		// sandboxes) no se mueven de sitio, así que una configuración escrita
+		// antes de que existiera el máximo de shells se sigue leyendo igual.
 		partes := strings.Split(t, ":")
-		if len(partes) < 2 || partes[0] == "" || partes[1] == "" {
-			return nil, fmt.Errorf("KLING_SANDBOX_TENANTS: %q is not name:token[:max]", t)
+		if len(partes) < 2 || len(partes) > 4 || partes[0] == "" || partes[1] == "" {
+			return nil, fmt.Errorf("KLING_SANDBOX_TENANTS: %q is not name:token[:max_sandboxes[:max_shells]]", t)
 		}
 		te := frontal.Tenant{Nombre: partes[0], Token: partes[1]}
 		if len(partes) > 2 && partes[2] != "" {
 			n, err := strconv.Atoi(partes[2])
 			if err != nil || n < 0 {
-				return nil, fmt.Errorf("KLING_SANDBOX_TENANTS: %q: max has to be a number", t)
+				return nil, fmt.Errorf("KLING_SANDBOX_TENANTS: %q: max_sandboxes has to be a number", t)
 			}
 			te.MaxSandboxes = n
+		}
+		if len(partes) > 3 && partes[3] != "" {
+			n, err := strconv.Atoi(partes[3])
+			if err != nil || n < 0 {
+				return nil, fmt.Errorf("KLING_SANDBOX_TENANTS: %q: max_shells has to be a number", t)
+			}
+			te.MaxShells = n
 		}
 		out = append(out, te)
 	}
