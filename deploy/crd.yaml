@@ -34,7 +34,13 @@ spec:
           type: string
           jsonPath: .status.host
         - name: Expires
-          type: date
+          # No "date": ese tipo de columna en el API server siempre calcula
+          # cuánto ha pasado DESDE la marca (como Age), y con una marca en el
+          # FUTURO (expiresAt) time.Since da negativo y el formateador de
+          # Kubernetes lo imprime como "<invalid>" sin excepción, siempre.
+          # Comprobado contra un k3s real (v1.36.4+k3s1): con "date" la
+          # columna sale <invalid> incluso con una marca RFC3339 perfecta.
+          type: string
           jsonPath: .status.expiresAt
         - name: Age
           type: date
