@@ -15,6 +15,9 @@ import (
 	"github.com/juan52878911/kindling-sandbox/internal/operator"
 )
 
+// Version se fija al compilar:  -ldflags "-X main.Version=..."
+var Version = "dev"
+
 func main() {
 	// -kube-url y -kube-token son SOLO para hablar con el API de Kubernetes
 	// desde fuera del clúster (pruebas, un `kubectl proxy` local). Dentro del
@@ -26,6 +29,7 @@ func main() {
 	flag.Parse()
 
 	logger := log.New(os.Stderr, "", log.LstdFlags)
+	logger.Printf("kindling-operator %s", Version)
 
 	kubeCfg, err := kubeConfig(*kubeURL, *kubeToken)
 	if err != nil {

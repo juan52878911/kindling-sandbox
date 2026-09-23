@@ -8,6 +8,14 @@ sobre las microVMs de [kindling](https://github.com/juan52878911/kindling).
 | v0.2.x | v0.8.x |
 | v0.1.x | v0.7.x |
 
+## v0.2.1 — 2026-09-23
+
+- **La imagen del operador se publica** en `ghcr.io/juan52878911/kindling-operator`,
+  para amd64 y arm64, y `deploy/deployment.yaml` la fija por versión. En v0.2.0 el
+  manifiesto apuntaba a una imagen que no existía.
+- La release incluye los binarios del operador para linux y un tar con los
+  manifiestos de `deploy/`.
+
 ## v0.2.0 — 2026-09-23
 
 - Depende de kindling v0.8, y un host con el disco casi lleno (el 503 nuevo del

@@ -1,0 +1,19 @@
+# Imagen del operador de Kubernetes (cmd/kindling-operator).
+#
+# Estática y sin shell: el operador es un binario Go sin cgo que solo habla HTTP
+# con el API de Kubernetes y con el frontal. distroless/static trae los
+# certificados de CA (para un frontal detrás de HTTPS) y un usuario sin
+# privilegios, y nada más que se pueda explotar.
+FROM golang:1.24 AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+ARG VERSION=dev
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.Version=${VERSION}" \
+      -o /kindling-operator ./cmd/kindling-operator
+
+FROM gcr.io/distroless/static:nonroot
+COPY --from=build /kindling-operator /kindling-operator
+USER nonroot:nonroot
+ENTRYPOINT ["/kindling-operator"]

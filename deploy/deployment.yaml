@@ -21,7 +21,7 @@ spec:
       serviceAccountName: kindling-operator
       containers:
         - name: operator
-          image: ghcr.io/juan52878911/kindling-operator:latest
+          image: ghcr.io/juan52878911/kindling-operator:v0.2.1
           # Sin flags: dentro del clúster, KUBERNETES_SERVICE_HOST/PORT y la
           # cuenta de servicio ya dan todo lo que hace falta para hablar con
           # el API de Kubernetes. La URL y el token del frontal SÍ van por
