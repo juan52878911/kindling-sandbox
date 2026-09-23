@@ -184,7 +184,9 @@ func Intentar[T any](ctx context.Context, r *Registro, sirve func(*Host) bool, t
 			return out, h, nil
 		}
 		ultimo = fmt.Errorf("%s: %w", h.Nombre, err)
-		if !api.IsInsufficientMemory(err) && !api.IsMachineLimit(err) && !api.EsFalloTSC(err) {
+		// El disco casi lleno (503 desde kindling v0.8) también lo resuelve otro
+		// host: es falta de sitio, como la memoria, solo que de otro recurso.
+		if !api.IsInsufficientMemory(err) && !api.IsMachineLimit(err) && !api.EsFalloTSC(err) && !api.IsDiskFull(err) {
 			return cero, h, ultimo
 		}
 	}

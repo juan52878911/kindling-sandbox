@@ -9,6 +9,8 @@ sobre las microVMs de [kindling](https://github.com/juan52878911/kindling).
 
 ## Sin publicar — v0.2.0
 
+- Depende de kindling v0.8, y un host con el disco casi lleno (el 503 nuevo del
+  núcleo) se reintenta en otro igual que uno sin memoria.
 - **`GET /v1/metrics`**, en texto de Prometheus y detrás del mismo token que el
   resto de la API (uno de cualquier inquilino vale): sandboxes vivos por
   inquilino y estado, creaciones totales por resultado, latencia de creación,

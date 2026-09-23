@@ -108,6 +108,18 @@ func TestIntentarReintentaCuandoNoCabeYNoCuandoEsOtraCosa(t *testing.T) {
 		t.Fatalf("con todos llenos: %v, quería ErrSinSitio", err)
 	}
 
+	// El disco casi lleno también se reintenta en otro host.
+	_, h, err = Intentar(context.Background(), reg, nil, func(ctx context.Context, h *Host) (string, error) {
+		if h.Nombre == "lleno" {
+			return "", &api.StatusError{Code: api.StatusDiskFull,
+				Message: "only 900 MiB of disk left under /var/lib/kindling (the minimum to start a machine is 2048 MiB)"}
+		}
+		return "ok", nil
+	})
+	if err != nil || h.Nombre != "libre" {
+		t.Fatalf("disco lleno: host %v, err %v; quería que acabara en 'libre'", h, err)
+	}
+
 	// Un error cualquiera NO se reintenta: repetirlo en otro host solo
 	// multiplica el mismo fallo, y el mensaje que llega es el bueno.
 	intentos := 0
