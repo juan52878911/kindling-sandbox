@@ -81,7 +81,15 @@ type SandboxStatus struct {
 	// del frontal sin que el operador lo haya borrado él mismo).
 	State     string     `json:"state,omitempty"`
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
-	Message   string     `json:"message,omitempty"`
+	// Message es un puntero, no un string a secas: PatchStatus manda un merge
+	// patch a partir de un SandboxStatus a medio rellenar, y con omitempty un
+	// string en cero (recuperado, sin error) nunca saldría en el JSON — el
+	// merge patch omitiría la clave por completo y el mensaje de error viejo
+	// se quedaría para siempre en Kubernetes aunque el frontal ya respondiera
+	// bien. nil sigue significando "no toques este campo"; un puntero a ""
+	// significa "bórralo de verdad". Comprobado contra un k3s real: sin esto,
+	// status.message no se limpiaba nunca tras una caída del frontal.
+	Message *string `json:"message,omitempty"`
 	// ObservedGeneration es la generation de spec que ya se aplicó. Distinta
 	// de metadata.generation es la señal de "hay un cambio de spec pendiente"
 	// (hoy, solo ttlSeconds puede cambiar en caliente).
