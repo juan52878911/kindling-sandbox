@@ -8,6 +8,28 @@ sobre las microVMs de [kindling](https://github.com/juan52878911/kindling).
 | v0.2.x | v0.8.x |
 | v0.1.x | v0.7.x |
 
+## v0.2.2 — 2026-09-23
+
+- **`kindling-operator` probado contra un k3s real** (`v1.36.4+k3s1`), no solo
+  contra el API falso de sus tests. Dos fallos que solo un clúster de verdad
+  podía enseñar, los dos arreglados:
+  - `deploy/crd.yaml`: la columna `Expires` usaba `type: date`, que Kubernetes
+    calcula como tiempo transcurrido DESDE la marca — con una fecha de
+    expiración (en el futuro) eso siempre sale `<invalid>`. Ahora es
+    `type: string`.
+  - `status.message` no se limpiaba nunca tras una caída del frontal: un
+    `SandboxStatus{Message: ""}` con `omitempty` no manda la clave en el
+    merge patch, así que el mensaje de la última caída se quedaba para
+    siempre. `Message` es ahora `*string` (`internal/operator/types.go`):
+    `nil` no toca el campo, un puntero a `""` lo limpia de verdad.
+- `deploy/deployment.yaml` apunta a la imagen `v0.2.2`, que trae el arreglo de
+  `status.message`.
+- **`scripts/93-e2e-k8s.sh`**: prueba de extremo a extremo del operador contra
+  un clúster de Kubernetes real y un frontal real (plantilla e imagen, exec,
+  renovar TTL, `kubectl delete`, borrado detrás de las espaldas del operador,
+  reinicio del operador, frontal caído y recuperado, watch interrumpido, CRD
+  `oneOf`, RBAC). Ver `docs/kubernetes.md`.
+
 ## v0.2.1 — 2026-09-23
 
 - **La imagen del operador se publica** en `ghcr.io/juan52878911/kindling-operator`,

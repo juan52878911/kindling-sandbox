@@ -272,6 +272,21 @@ type fakeFrontal struct {
 	sandboxes map[string]*frontal.Sandbox
 	seq       int
 	creates   int
+	// down simula el frontal caído: get y renew contestan 503 mientras esté a
+	// true, para probar que status.message se pone y se limpia después.
+	down bool
+}
+
+func (f *fakeFrontal) setDown(v bool) {
+	f.mu.Lock()
+	f.down = v
+	f.mu.Unlock()
+}
+
+func (f *fakeFrontal) isDown() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.down
 }
 
 func newFakeFrontal(t *testing.T) *fakeFrontal {
@@ -319,6 +334,10 @@ func (f *fakeFrontal) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *fakeFrontal) get(w http.ResponseWriter, r *http.Request) {
+	if f.isDown() {
+		writeTestJSON(w, http.StatusServiceUnavailable, api.Error{Message: "frontal down"})
+		return
+	}
 	id := r.PathValue("id")
 	f.mu.Lock()
 	sb, ok := f.sandboxes[id]
@@ -344,6 +363,10 @@ func (f *fakeFrontal) del(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *fakeFrontal) renew(w http.ResponseWriter, r *http.Request) {
+	if f.isDown() {
+		writeTestJSON(w, http.StatusServiceUnavailable, api.Error{Message: "frontal down"})
+		return
+	}
 	id := r.PathValue("id")
 	var pet frontal.RenovarPeticion
 	_ = json.NewDecoder(r.Body).Decode(&pet)
@@ -594,4 +617,49 @@ func TestReconcile_TTLChangeRenews(t *testing.T) {
 	if got.TTLSeconds != 900 {
 		t.Fatalf("expected the frontal to have been renewed to 900s, got %d", got.TTLSeconds)
 	}
+}
+
+// TestReconcile_MessageClearsAfterFrontalRecovers cubre un bug visto contra
+// un k3s real: status.message se ponía con el error del frontal caído, pero
+// nunca se limpiaba al recuperarse, porque un SandboxStatus{Message: ""} con
+// `omitempty` no manda la clave "message" en el merge patch, y el servidor
+// se queda con lo que ya tenía. La caché en memoria del operador SÍ se veía
+// bien (cur.Status.Message = "" en cuanto la reconciliación de éxito
+// terminaba), así que hacía falta mirar el objeto tal y como lo sirve el
+// falso API de Kubernetes, no solo lo que el operador cree que escribió.
+func TestReconcile_MessageClearsAfterFrontalRecovers(t *testing.T) {
+	shrinkBackoff(t)
+	k8s := newFakeK8s(t)
+	fr := newFakeFrontal(t)
+
+	created, err := fr.client().Create(testCtx(t), SandboxSpec{Template: "node", TTLSeconds: 300})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sb := newTestSandbox("default", "eight")
+	sb.Metadata.Finalizers = []string{CleanupFinalizer}
+	sb.Metadata.Generation = 2
+	sb.Spec.TTLSeconds = 900
+	sb.Status = SandboxStatus{ID: created.ID, Host: created.Host, State: string(created.State), ObservedGeneration: 1}
+	k8s.seed(sb)
+
+	fr.setDown(true)
+
+	ctrl := NewController(k8s.client(), fr.client(), nil)
+	ctrl.Resync = 20 * time.Millisecond // resync agresivo: sin esperar 30s de verdad
+	ctx, cancel := testContext(t)
+	defer cancel()
+	go ctrl.Run(ctx)
+
+	waitFor(t, "status.message to be set while the frontal is down", func() bool {
+		got, ok := k8s.get("default/eight")
+		return ok && hasMessage(got.Status.Message)
+	})
+
+	fr.setDown(false)
+
+	waitFor(t, "status.message to clear once the frontal recovers", func() bool {
+		got, ok := k8s.get("default/eight")
+		return ok && got.Status.ObservedGeneration == 2 && !hasMessage(got.Status.Message)
+	})
 }

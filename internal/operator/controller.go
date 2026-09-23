@@ -314,7 +314,7 @@ func (c *Controller) reconcile(ctx context.Context, sb *Sandbox) {
 		cur.Status.State = string(out.State)
 		cur.Status.ExpiresAt = out.ExpiresAt
 		cur.Status.ObservedGeneration = cur.Metadata.Generation
-		cur.Status.Message = ""
+		cur.Status.Message = strPtr("")
 		changed = true
 	}
 
@@ -325,11 +325,11 @@ func (c *Controller) reconcile(ctx context.Context, sb *Sandbox) {
 	out, err := c.Frontal.Get(ctx, cur.Status.ID)
 	switch {
 	case err == nil:
-		if cur.Status.State != string(out.State) || !sameTime(cur.Status.ExpiresAt, out.ExpiresAt) || cur.Status.Message != "" {
+		if cur.Status.State != string(out.State) || !sameTime(cur.Status.ExpiresAt, out.ExpiresAt) || hasMessage(cur.Status.Message) {
 			cur.Status.State = string(out.State)
 			cur.Status.ExpiresAt = out.ExpiresAt
 			cur.Status.Host = out.Host
-			cur.Status.Message = ""
+			cur.Status.Message = strPtr("")
 			changed = true
 		}
 	case IsFrontalNotFound(err):
@@ -381,11 +381,11 @@ func (c *Controller) reconcileDeleting(ctx context.Context, cur *Sandbox) {
 }
 
 func (c *Controller) setMessage(ctx context.Context, cur *Sandbox, msg string) {
-	if cur.Status.Message == msg {
+	if cur.Status.Message != nil && *cur.Status.Message == msg {
 		return
 	}
-	cur.Status.Message = msg
-	updated, err := c.Kube.PatchStatus(ctx, cur.Metadata.Namespace, cur.Metadata.Name, SandboxStatus{Message: msg})
+	cur.Status.Message = strPtr(msg)
+	updated, err := c.Kube.PatchStatus(ctx, cur.Metadata.Namespace, cur.Metadata.Name, SandboxStatus{Message: strPtr(msg)})
 	if err != nil {
 		c.Log.Printf("operator: %s/%s: writing error message: %v", cur.Metadata.Namespace, cur.Metadata.Name, err)
 		return
@@ -393,6 +393,13 @@ func (c *Controller) setMessage(ctx context.Context, cur *Sandbox, msg string) {
 	cur.Metadata.ResourceVersion = updated.Metadata.ResourceVersion
 	c.remember(cur)
 }
+
+// strPtr y hasMessage existen por status.message (ver su comentario en
+// types.go): un puntero a "" limpia el mensaje de verdad en un merge patch,
+// donde un string en cero con omitempty jamás saldría en el JSON.
+func strPtr(s string) *string { return &s }
+
+func hasMessage(m *string) bool { return m != nil && *m != "" }
 
 func removeFinalizer(finalizers []string) []string {
 	out := make([]string, 0, len(finalizers))
