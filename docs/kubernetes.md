@@ -119,6 +119,10 @@ memoria y política de TTL al crear, y no los cambia en caliente (ver
 
 ## Limitaciones
 
+- Reconcilia de uno en uno: mientras un `Sandbox` espera al frontal (arrancar
+  una microVM en frío tarda segundos), los eventos de los demás esperan. Está
+  acotado por los plazos de los clientes HTTP y no se cuelga, pero con cientos de
+  `Sandbox` creándose a la vez el último tardará en verse reflejado.
 - Sin `allow_domains`: el campo `egress: allowlist` del frontal no está en el
   CRD porque pide una lista de dominios que este `Sandbox` no modela hoy.
   Pedirlo sin dominios lo rechaza el frontal, y el error queda en

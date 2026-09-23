@@ -132,12 +132,6 @@ type apiError struct {
 
 func (e *apiError) Error() string { return fmt.Sprintf("kubernetes api: %s (%d)", e.Message, e.Code) }
 
-// IsNotFound dice si err es un 404 del API de Kubernetes.
-func IsNotFound(err error) bool {
-	var e *apiError
-	return errors.As(err, &e) && e.Code == http.StatusNotFound
-}
-
 // errGone señala un 410: el resourceVersion desde el que se pidió el watch ya
 // no está en el histórico del API server (compactado). No es un fallo de red,
 // es la señal de "vuelve a listar desde cero".

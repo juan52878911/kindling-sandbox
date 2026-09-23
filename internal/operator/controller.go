@@ -120,6 +120,7 @@ func (c *Controller) relist(ctx context.Context) (string, error) {
 func (c *Controller) watchUntilGone(ctx context.Context, rv string) {
 	backoff := backoffBase
 	for ctx.Err() == nil {
+		abierto := time.Now()
 		err := c.Kube.Watch(ctx, rv, func(kind string, sb *Sandbox) {
 			if sb.Metadata.ResourceVersion != "" {
 				rv = sb.Metadata.ResourceVersion
@@ -148,6 +149,13 @@ func (c *Controller) watchUntilGone(ctx context.Context, rv string) {
 		}
 		if err != nil {
 			c.Log.Printf("operator: watch: %v", err)
+		}
+		// Un watch que aguantó abierto un buen rato y se cerró es lo normal (el
+		// API server los corta por tiempo): no cuenta como racha de fallos, y
+		// arrastrar el backoff de fallos anteriores solo retrasaría el
+		// siguiente sin motivo.
+		if time.Since(abierto) > time.Minute {
+			backoff = backoffBase
 		}
 		if !sleepCtx(ctx, backoff) {
 			return
