@@ -136,3 +136,51 @@ memoria y política de TTL al crear, y no los cambia en caliente (ver
   en el frontal sin que ningún `Sandbox` lo referencie todavía (no
   duplicado: simplemente huérfano hasta que alguien lo note por `kling sbx
   ls` o lo alcance el abandono del frontal).
+
+## Probado contra un clúster real
+
+Hasta la v0.2.1 esto solo se había probado contra el API de Kubernetes falso
+de `internal/operator/controller_test.go`. `scripts/93-e2e-k8s.sh` lo prueba
+contra un **k3s real** (`v1.36.4+k3s1`, instalado con `--disable
+traefik,servicelb,metrics-server` para no gastar RAM de más en un laboratorio
+que también corre kindling) y un frontal real: plantilla e imagen, exec por
+`status.id`, renovar `ttlSeconds`, `kubectl delete` con finalizer, borrado a
+mano en el frontal (`gone`, sin recrear), reinicio del operador (sin
+duplicar), frontal caído y recuperado, watch interrumpido, CRD `oneOf`, y
+RBAC. Se ejecuta a mano, no en CI (necesita un daemon de kindling con KVM
+detrás, igual que `scripts/90-e2e.sh`).
+
+Dos cosas que el falso API nunca hubiera podido enseñar, porque son
+comportamiento del **API server de verdad**, no del operador:
+
+- **La columna `Expires` era `type: date` y siempre salía `<invalid>`.**
+  Kubernetes calcula esa columna como "tiempo transcurrido DESDE la marca"
+  (`time.Since`), que es exactamente al revés de lo que hace falta para una
+  fecha de EXPIRACIÓN: con una marca en el futuro, la resta da negativo y el
+  formateador de Kubernetes la imprime como `<invalid>`, siempre, sin
+  excepción — con cualquier `expiresAt` válido, no solo con el de este
+  operador. `deploy/crd.yaml` usa `type: string` ahora, que muestra la fecha
+  tal cual.
+- **`status.message` no se limpiaba nunca tras una caída del frontal.**
+  `PatchStatus` manda un merge patch a partir de un `SandboxStatus` a medio
+  rellenar (solo las claves que trae salen en el JSON); con `Message string
+  \`json:"message,omitempty"\``, un mensaje vacío (recuperado, sin error)
+  jamás sale en el JSON —omitempty lo quita del todo— así que el merge patch
+  nunca tocaba esa clave y el mensaje de la última caída se quedaba para
+  siempre. `internal/operator/types.go` usa ahora `*string`: `nil` sigue
+  significando "no toques este campo", y un puntero a `""` lo limpia de
+  verdad. Cubierto además por
+  `TestReconcile_MessageClearsAfterFrontalRecovers`, que sí lo detecta contra
+  el API falso (el bug estaba en lo que el cliente manda, no en cómo lo
+  entiende Kubernetes; solo hacía falta la prueba).
+
+Apuntar `KLING_SANDBOX_URL` al frontal desde un Pod: el frontal no vive en el
+clúster (ver "Qué NO es" arriba), así que un Service normal no sirve. Lo que
+hace falta es que el Pod pueda alcanzar por red al host donde corre el
+frontal — la IP del nodo (o de la máquina donde esté desplegado, si es otra),
+nunca `127.0.0.1` ni `localhost`, y con el frontal escuchando en `0.0.0.0`
+(o esa IP en concreto), no solo en loopback. `scripts/93-e2e-k8s.sh` detecta
+esa IP con `ip route get 8.8.8.8` (la fuente de la ruta por defecto) en vez
+de la primera dirección "global" que encuentre: en un host que también corre
+kindling, `ip addr` lista una dirección `172.30.x.x` por cada microVM viva
+ANTES que la del NIC real, y esas van y vienen con la microVM que las creó.
