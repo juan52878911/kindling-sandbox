@@ -31,7 +31,7 @@ sobre las microVMs de [kindling](https://github.com/juan52878911/kindling).
   gateway reales (plantilla, cuota, aislamiento, exec, cp, shell, métricas y
   precalentadas).
 
-## Sin publicar — v0.1.0
+## v0.1.0 — 2026-09-23
 
 Primera versión. Lo que kindling no debe llevar dentro: un extremo en la red con
 autenticación, plantillas, inquilinos y varios hosts.

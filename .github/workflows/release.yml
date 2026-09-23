@@ -1,0 +1,75 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'tag a publicar (ej. v0.1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: compute version
+        id: ver
+        shell: bash
+        run: |
+          VERSION="${{ inputs.tag }}"
+          [ -n "$VERSION" ] || VERSION="${GITHUB_REF_NAME}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "ldver=${VERSION#v}" >> "$GITHUB_OUTPUT"
+
+      # kling-sandbox para las cuatro plataformas: el cliente va en el portátil y
+      # el frontal en el host del daemon. Todo estático.
+      - name: build
+        env:
+          CGO_ENABLED: '0'
+          LDFLAGS: -s -w -X main.Version=${{ steps.ver.outputs.ldver }}
+        run: |
+          mkdir -p dist
+          for plat in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+            os="${plat%/*}"; arch="${plat#*/}"
+            GOOS=$os GOARCH=$arch go build -trimpath -ldflags "$LDFLAGS" \
+              -o "dist/kling-sandbox-$os-$arch" ./cmd/kling-sandbox
+          done
+          # La unidad de systemd del frontal, para quien no clona el repo.
+          tar -czf dist/kindling-sandbox-host.tar.gz packaging/
+          cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+
+      - name: release notes
+        shell: bash
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          awk -v ver="${VERSION#v}" '
+            /^## / { if (seen) exit; if (index($0, ver)) seen=1 }
+            seen { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            printf '## %s\n\nBinarios de kling-sandbox. Instalación: ver el README.\n' "$VERSION" > notes.md
+          fi
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.version }}
+          name: ${{ steps.ver.outputs.version }}
+          body_path: notes.md
+          fail_on_unmatched_files: true
+          files: dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
