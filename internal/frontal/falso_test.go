@@ -33,12 +33,20 @@ type falso struct {
 	mu        sync.Mutex
 	maquinas  map[string]*api.Machine
 	snapshots []string
-	imagenes  []string
-	ficheros  map[string][]byte
-	libreMiB  int64
+	// snapAnot son las anotaciones de cada snapshot (por nombre), donde vive la
+	// receta que plantilla.Construir cuelga de AnotacionReceta.
+	snapAnot map[string]map[string]json.RawMessage
+	imagenes []string
+	ficheros map[string][]byte
+	libreMiB int64
 
 	// crearCodigo hace fallar POST /sandboxes con ese estado (507, 409...).
 	crearCodigo int
+	// crearErrTSC hace que restaurar DESDE UN SNAPSHOT (req.From != "") falle
+	// con el mensaje real que un host reiniciado deja ver al restaurar, y que
+	// api.EsFalloTSC reconoce. Un commit (lo que hace plantilla.Construir al
+	// terminar) lo apaga: es justo lo que arregla el fallo simulado.
+	crearErrTSC bool
 	// execLibera: el exec falso manda la primera salida, espera a que se cierre
 	// este canal y entonces manda el exit. Es lo que permite comprobar que el
 	// frontal no acumula el flujo.
@@ -85,11 +93,90 @@ func (f *falso) rutas() http.Handler {
 		writeJSON(w, 200, api.ProcStats{AvailableMiB: f.libreMiB})
 	})
 	m.HandleFunc("GET /snapshots", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
 		out := []*api.Snapshot{}
 		for _, n := range f.snapshots {
-			out = append(out, &api.Snapshot{Name: n, AllowExec: true})
+			out = append(out, &api.Snapshot{Name: n, AllowExec: true, Annotations: f.snapAnot[n]})
 		}
+		f.mu.Unlock()
 		writeJSON(w, 200, out)
+	})
+	m.HandleFunc("GET /snapshots/{name}", func(w http.ResponseWriter, r *http.Request) {
+		nombre := r.PathValue("name")
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		hay := false
+		for _, s := range f.snapshots {
+			hay = hay || s == nombre
+		}
+		if !hay {
+			fail(w, 404, fmt.Errorf("no snapshot %q", nombre))
+			return
+		}
+		writeJSON(w, 200, &api.Snapshot{Name: nombre, AllowExec: true, Annotations: f.snapAnot[nombre]})
+	})
+	m.HandleFunc("PUT /snapshots/{name}/annotations/{key}", func(w http.ResponseWriter, r *http.Request) {
+		var valor json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&valor); err != nil {
+			fail(w, 400, err)
+			return
+		}
+		nombre, clave := r.PathValue("name"), r.PathValue("key")
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if f.snapAnot == nil {
+			f.snapAnot = map[string]map[string]json.RawMessage{}
+		}
+		if f.snapAnot[nombre] == nil {
+			f.snapAnot[nombre] = map[string]json.RawMessage{}
+		}
+		f.snapAnot[nombre][clave] = valor
+		writeJSON(w, 200, &api.Snapshot{Name: nombre, AllowExec: true, Annotations: f.snapAnot[nombre]})
+	})
+	// POST /machines y POST /machines/{ref}/commit: lo que plantilla.Construir
+	// necesita para rehacer un dorado (Run, un exec que ya sirve /machines/{ref}/exec,
+	// y Commit).
+	m.HandleFunc("POST /machines", func(w http.ResponseWriter, r *http.Request) {
+		var req api.RunRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			fail(w, 400, err)
+			return
+		}
+		b := make([]byte, 8)
+		_, _ = rand.Read(b)
+		id := "build-" + hex.EncodeToString(b)
+		mc := &api.Machine{ID: id, Name: id, Image: req.Image, State: api.StateRunning,
+			AllowExec: req.AllowExec, IP: "10.0.0.3"}
+		f.mu.Lock()
+		f.maquinas[mc.ID] = mc
+		f.mu.Unlock()
+		c := *mc
+		writeJSON(w, 201, &c)
+	})
+	m.HandleFunc("POST /machines/{ref}/commit", func(w http.ResponseWriter, r *http.Request) {
+		var req api.CommitRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			fail(w, 400, err)
+			return
+		}
+		f.mu.Lock()
+		ya := false
+		for _, s := range f.snapshots {
+			ya = ya || s == req.Name
+		}
+		if !ya {
+			f.snapshots = append(f.snapshots, req.Name)
+		}
+		if f.snapAnot == nil {
+			f.snapAnot = map[string]map[string]json.RawMessage{}
+		}
+		// Un replace es un dorado nuevo, aunque conserve el nombre: se limpia lo
+		// que hubiera hasta que Construir cuelgue la receta de nuevo.
+		f.snapAnot[req.Name] = map[string]json.RawMessage{}
+		// Esto es justo lo que arregla el fallo de TSC simulado.
+		f.crearErrTSC = false
+		f.mu.Unlock()
+		writeJSON(w, 200, &api.Snapshot{Name: req.Name, AllowExec: true, CreatedAt: time.Now().UTC()})
 	})
 	m.HandleFunc("GET /images", func(w http.ResponseWriter, r *http.Request) {
 		out := []api.Image{}
@@ -166,6 +253,17 @@ func (f *falso) crear(w http.ResponseWriter, r *http.Request) {
 	var req api.SandboxRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		fail(w, 400, err)
+		return
+	}
+	f.mu.Lock()
+	tsc := f.crearErrTSC
+	f.mu.Unlock()
+	if req.From != "" && tsc {
+		// El mensaje real que deja ver explainRestoreErr del núcleo cuando la
+		// causa es un reinicio del host: api.EsFalloTSC lo reconoce por el
+		// token "TSC", y va en un 500 porque el daemon no tiene un código propio
+		// para esto (es la traducción, no un StatusError).
+		fail(w, 500, fmt.Errorf("Could not set TSC scaling within the snapshot: Invalid argument (os error 22)"))
 		return
 	}
 	if f.crearCodigo != 0 {

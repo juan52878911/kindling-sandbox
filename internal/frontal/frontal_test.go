@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/juan52878911/kindling-sandbox/internal/hosts"
+	"github.com/juan52878911/kindling-sandbox/internal/plantilla"
 	"github.com/juan52878911/kindling/pkg/api"
 )
 
@@ -488,6 +489,180 @@ func TestLimpiarBorraLosAbandonadosYRespetaElPool(t *testing.T) {
 	}
 	if f.maquina(precalentada.ID) == nil {
 		t.Fatal("the prewarmed instance (no tenant) was removed: it belongs to the template pool")
+	}
+}
+
+func TestMetricasExponePorTenantYResultado(t *testing.T) {
+	f := nuevoFalso(t)
+	srv, _ := montar(t, map[string]*falso{"a": f},
+		Tenant{Nombre: "alice", Token: tokenAlice},
+		Tenant{Nombre: "bob", Token: tokenBob, MaxSandboxes: 1})
+
+	// Sin token, como el resto de rutas protegidas.
+	esperaCodigo(t, pide(t, srv, "", "GET", "/v1/metrics", nil), 401)
+
+	crea(t, srv, tokenAlice, CrearPeticion{Image: "base"})                                                     // ok
+	esperaCodigo(t, pide(t, srv, tokenAlice, "POST", "/v1/sandboxes", CrearPeticion{Template: "python"}), 404) // sin plantilla en ningún host: error
+	crea(t, srv, tokenBob, CrearPeticion{Image: "base"})                                                       // ok
+	esperaCodigo(t, pide(t, srv, tokenBob, "POST", "/v1/sandboxes", CrearPeticion{Image: "base"}), 429)        // cuota de bob
+
+	resp := pide(t, srv, tokenBob, "GET", "/v1/metrics", nil)
+	esperaCodigo(t, resp, 200)
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+		t.Fatalf("content-type %q", ct)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	texto := string(b)
+	for _, quiero := range []string{
+		`kling_sandbox_machines{tenant="alice",state="running"} 1`,
+		`kling_sandbox_machines{tenant="bob",state="running"} 1`,
+		`kling_sandbox_creations_total{result="ok"} 2`,
+		`kling_sandbox_creations_total{result="quota"} 1`,
+		`kling_sandbox_creations_total{result="error"} 1`,
+		`kling_sandbox_host_up{host="a"} 1`,
+		`kling_sandbox_shell_sessions{tenant="alice"} 0`,
+		"kling_sandbox_create_duration_seconds_sum ",
+		"kling_sandbox_create_duration_seconds_count ",
+	} {
+		if !strings.Contains(texto, quiero) {
+			t.Errorf("metrics missing %q, got:\n%s", quiero, texto)
+		}
+	}
+}
+
+func TestCuotaDeShellsRechazaConCuatrocientosVeintinueveYLaMetricaLoVe(t *testing.T) {
+	f := nuevoFalso(t)
+	srv, _ := montar(t, map[string]*falso{"a": f}, Tenant{Nombre: "alice", Token: tokenAlice, MaxShells: 1})
+	sb := crea(t, srv, tokenAlice, CrearPeticion{Image: "base"})
+
+	c1, resp1 := abrirShell(t, srv, tokenAlice, sb.ID)
+	if c1 == nil {
+		t.Fatalf("no upgrade: %d", resp1.StatusCode)
+	}
+
+	// Segunda shell del mismo tenant, con la primera todavía abierta: 429.
+	if _, resp2 := abrirShell(t, srv, tokenAlice, sb.ID); resp2.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("segunda shell = %d, quería 429", resp2.StatusCode)
+	}
+
+	// La métrica ve la sesión abierta.
+	metricasResp := pide(t, srv, tokenAlice, "GET", "/v1/metrics", nil)
+	b, _ := io.ReadAll(metricasResp.Body)
+	if !strings.Contains(string(b), `kling_sandbox_shell_sessions{tenant="alice"} 1`) {
+		t.Fatalf("la métrica no ve la sesión abierta:\n%s", b)
+	}
+
+	// Al cerrarla, el cupo se libera (el frontal lo nota cuando el relé, en su
+	// propia goroutine de servidor, se entera de que la conexión murió).
+	c1.conn.Close()
+	limite := time.Now().Add(3 * time.Second)
+	for time.Now().Before(limite) {
+		resp := pide(t, srv, tokenAlice, "GET", "/v1/metrics", nil)
+		b, _ := io.ReadAll(resp.Body)
+		if strings.Contains(string(b), `kling_sandbox_shell_sessions{tenant="alice"} 0`) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if _, resp3 := abrirShell(t, srv, tokenAlice, sb.ID); resp3.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("tras cerrar la primera, una nueva shell debía admitirse: %d", resp3.StatusCode)
+	}
+}
+
+func TestListaPlantillasYEnQueHostsEstan(t *testing.T) {
+	a, b := nuevoFalso(t), nuevoFalso(t)
+	a.snapshots = []string{"sbx-node"}
+	b.snapshots = []string{"sbx-node", "sbx-py"}
+	rec, _ := json.Marshal(plantilla.Receta{
+		Plantilla: plantilla.Plantilla{Nombre: "node", Imagen: "toolchain"},
+		Hash:      "deadbeef",
+		Hecho:     time.Now().UTC().Truncate(time.Second),
+	})
+	a.snapAnot = map[string]map[string]json.RawMessage{"sbx-node": {plantilla.AnotacionReceta: rec}}
+	srv, _ := montar(t, map[string]*falso{"a": a, "b": b})
+
+	esperaCodigo(t, pide(t, srv, "", "GET", "/v1/templates", nil), 401)
+
+	resp := pide(t, srv, tokenAlice, "GET", "/v1/templates", nil)
+	esperaCodigo(t, resp, 200)
+	lista := decodifica[[]TemplateInfo](t, resp)
+	if len(lista) != 2 || lista[0].Name != "node" || lista[1].Name != "py" {
+		t.Fatalf("plantillas = %+v", lista)
+	}
+	node := lista[0]
+	if len(node.Hosts) != 2 || node.Hosts[0].Host != "a" || node.Hosts[1].Host != "b" {
+		t.Fatalf("hosts de node = %+v", node.Hosts)
+	}
+	if node.Hosts[0].Recipe != "deadbeef" || node.Hosts[0].BuiltAt.IsZero() {
+		t.Fatalf("host a de node debía traer su receta: %+v", node.Hosts[0])
+	}
+	if node.Hosts[1].Recipe != "" {
+		t.Fatalf("host b de node no tiene anotación, no debía traer receta: %+v", node.Hosts[1])
+	}
+	py := lista[1]
+	if len(py.Hosts) != 1 || py.Hosts[0].Host != "b" {
+		t.Fatalf("hosts de py = %+v", py.Hosts)
+	}
+}
+
+// El corazón de la tarea 3: un reinicio del host invalida su dorado, y crear un
+// sandbox de esa plantilla en ese host falla con el mensaje que api.EsFalloTSC
+// reconoce. El frontal tiene que contestar 503 con Retry-After y reconstruir
+// solo, en segundo plano, con la receta que colgaba del snapshot roto.
+func TestPlantillaInvalidaPorTSCSeReconstruyeSolaYLuegoSirve(t *testing.T) {
+	f := nuevoFalso(t)
+	f.snapshots = []string{"sbx-node"}
+	p := plantilla.Plantilla{Nombre: "node", Imagen: "toolchain"}
+	rec, _ := json.Marshal(plantilla.Receta{Plantilla: p, Hash: plantilla.HashReceta(p), Hecho: time.Now()})
+	f.snapAnot = map[string]map[string]json.RawMessage{"sbx-node": {plantilla.AnotacionReceta: rec}}
+	f.crearErrTSC = true
+	srv, _ := montar(t, map[string]*falso{"a": f})
+
+	resp := pide(t, srv, tokenAlice, "POST", "/v1/sandboxes", CrearPeticion{Template: "node"})
+	esperaCodigo(t, resp, http.StatusServiceUnavailable)
+	if ra := resp.Header.Get("Retry-After"); ra == "" {
+		t.Fatal("esperaba una cabecera Retry-After")
+	}
+	b, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(b), "rebuild") {
+		t.Fatalf("el mensaje no dice que se está reconstruyendo: %s", b)
+	}
+
+	// La reconstrucción corre en segundo plano: se espera a que termine (el
+	// falso apaga crearErrTSC en cuanto ve el commit de plantilla.Construir).
+	limite := time.Now().Add(5 * time.Second)
+	for time.Now().Before(limite) {
+		f.mu.Lock()
+		sigue := f.crearErrTSC
+		f.mu.Unlock()
+		if !sigue {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if f.crearErrTSC {
+		t.Fatal("la reconstrucción en segundo plano no terminó a tiempo")
+	}
+
+	sb := crea(t, srv, tokenAlice, CrearPeticion{Template: "node"})
+	if sb.Template != "node" {
+		t.Fatalf("sandbox tras la reconstrucción: %+v", sb)
+	}
+}
+
+// Mientras un host tiene su dorado roto, otro host sano con la misma plantilla
+// sigue sirviendo: hosts.Intentar reintenta el fallo de TSC en otro candidato
+// antes de rendirse, igual que "no cabe".
+func TestOtroHostSanoSigueSirviendoLaPlantillaRota(t *testing.T) {
+	roto, sano := nuevoFalso(t), nuevoFalso(t)
+	roto.snapshots, sano.snapshots = []string{"sbx-node"}, []string{"sbx-node"}
+	roto.libreMiB, sano.libreMiB = 8192, 1024 // roto tiene más hueco: se probaría primero
+	roto.crearErrTSC = true
+	srv, _ := montar(t, map[string]*falso{"roto": roto, "sano": sano})
+
+	sb := crea(t, srv, tokenAlice, CrearPeticion{Template: "node"})
+	if sb.Host != "sano" {
+		t.Fatalf("host = %s, quería sano (el otro tiene el dorado invalidado)", sb.Host)
 	}
 }
 
