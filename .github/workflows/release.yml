@@ -85,6 +85,9 @@ jobs:
   # La imagen del operador en GHCR, para las dos arquitecturas: es la que
   # referencia deploy/deployment.yaml.
   imagen:
+    # Después de la release: si fallan los binarios o la release, no se publica
+    # una imagen de una versión que no existe.
+    needs: release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -104,13 +107,16 @@ jobs:
           VERSION="${{ inputs.tag }}"
           [ -n "$VERSION" ] || VERSION="${GITHUB_REF_NAME}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "ldver=${VERSION#v}" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.operator
           platforms: linux/amd64,linux/arm64
           push: true
-          build-args: VERSION=${{ steps.ver.outputs.version }}
+          # Sin la v, como en los binarios sueltos: el mismo operador informa de
+          # la misma versión venga de donde venga.
+          build-args: VERSION=${{ steps.ver.outputs.ldver }}
           tags: |
             ghcr.io/juan52878911/kindling-operator:${{ steps.ver.outputs.version }}
             ghcr.io/juan52878911/kindling-operator:latest
