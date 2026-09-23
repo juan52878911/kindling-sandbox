@@ -88,4 +88,5 @@ dentro de ningún clúster; Kubernetes solo hace de plano de control. Ver
 
 | kindling-sandbox | kindling |
 |---|---|
-| v0.1.x, v0.2.x | v0.7.x |
+| v0.2.x | v0.8.x |
+| v0.1.x | v0.7.x |

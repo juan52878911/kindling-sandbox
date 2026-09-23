@@ -5,9 +5,10 @@ sobre las microVMs de [kindling](https://github.com/juan52878911/kindling).
 
 | kindling-sandbox | kindling |
 |---|---|
-| v0.1.x, v0.2.x | v0.7.x |
+| v0.2.x | v0.8.x |
+| v0.1.x | v0.7.x |
 
-## Sin publicar — v0.2.0
+## v0.2.0 — 2026-09-23
 
 - Depende de kindling v0.8, y un host con el disco casi lleno (el 503 nuevo del
   núcleo) se reintenta en otro igual que uno sin memoria.
