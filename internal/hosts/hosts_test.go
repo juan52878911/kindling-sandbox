@@ -120,6 +120,27 @@ func TestIntentarReintentaCuandoNoCabeYNoCuandoEsOtraCosa(t *testing.T) {
 	}
 }
 
+// Un reinicio del host invalida sus dorados (el fallo de TSC que api.EsFalloTSC
+// reconoce), pero eso es DE ESE HOST: otro con el mismo snapshot bien puede
+// servir la petición, así que se reintenta igual que "no cabe".
+func TestIntentarReintentaConFalloDeTSC(t *testing.T) {
+	reg := Nuevo(map[string]string{
+		"roto": daemonFalso(t, 8192, true), // más hueco: se prueba primero
+		"sano": daemonFalso(t, 1024, true),
+	})
+	visitados := []string{}
+	got, h, err := Intentar(context.Background(), reg, nil, func(ctx context.Context, h *Host) (string, error) {
+		visitados = append(visitados, h.Nombre)
+		if h.Nombre == "roto" {
+			return "", errors.New("Could not set TSC scaling within the snapshot: Invalid argument (os error 22)")
+		}
+		return "hecho en " + h.Nombre, nil
+	})
+	if err != nil || got != "hecho en sano" || h.Nombre != "sano" {
+		t.Fatalf("got %q, host %v, err %v (visitados %v)", got, h, err, visitados)
+	}
+}
+
 // Sin hosts configurados no hay ambigüedad posible: se dice, no se devuelve una
 // lista vacía que el que llama interpretará como quiera.
 func TestIntentarSinHosts(t *testing.T) {

@@ -389,16 +389,34 @@ func (s *Servidor) handleCrear(w http.ResponseWriter, r *http.Request) {
 	// camino, y se reserva el hueco ANTES de crear para que dos peticiones a la
 	// vez no lo compartan.
 	if err := s.reservar(r.Context(), t, pet.Template); err != nil {
+		s.metricas.registrar(resultadoCuota, 0)
 		fail(w, http.StatusTooManyRequests, err)
 		return
 	}
 	defer s.liberar(t, pet.Template)
 
+	inicio := time.Now()
 	h, mc, err := s.crear(r.Context(), t, pet)
 	if err != nil {
+		s.metricas.registrar(resultadoDe(err), time.Since(inicio))
+		// Un reinicio del host invalida sus dorados: la reconstrucción ya se
+		// lanzó en segundo plano (dentro de crear, en cuanto se vio el fallo) y
+		// lo único que falta es decírselo a quien pidió el sandbox, con un
+		// Retry-After en vez del 502/503 genérico que daría un fallo cualquiera.
+		if pet.Template != "" && api.EsFalloTSC(err) {
+			w.Header().Set("Retry-After", retryAfterReconstruccion)
+			// %v y no %w: el mensaje se aprovecha, pero no se quiere que fail()
+			// encuentre un *api.StatusError más abajo en la cadena y nos pise el
+			// 503 con el código que trajera el daemon.
+			fail(w, http.StatusServiceUnavailable, fmt.Errorf(
+				"template %q can't be restored right now: a host restart invalidated its golden snapshot; "+
+					"rebuilding it in the background, try again shortly (%v)", pet.Template, err))
+			return
+		}
 		fail(w, codigoCrear(err), err)
 		return
 	}
+	s.metricas.registrar(resultadoOK, time.Since(inicio))
 	sb := vista(h, mc)
 	w.Header().Set("Location", "/v1/sandboxes/"+sb.ID)
 	writeJSON(w, http.StatusCreated, sb)
@@ -586,7 +604,17 @@ func (s *Servidor) crear(ctx context.Context, t *Tenant, p CrearPeticion) (*host
 	}
 
 	mc, h, err := hosts.Intentar(ctx, s.reg, sirve, func(ctx context.Context, h *hosts.Host) (*api.Machine, error) {
-		return h.Cliente.CreateSandbox(ctx, req)
+		mc, err := h.Cliente.CreateSandbox(ctx, req)
+		// El fallo de TSC es DE ESE HOST: su dorado quedó invalidado por un
+		// reinicio y solo una reconstrucción con la receta que lleva colgada lo
+		// arregla (ver reconstruir.go). Se lanza aquí, en cuanto se ve el fallo,
+		// para que empiece a repararse aunque hosts.Intentar acabe sirviendo la
+		// petición desde otro host sano: si no, la próxima que caiga en este
+		// mismo host tropezaría con lo mismo.
+		if err != nil && p.Template != "" && api.EsFalloTSC(err) {
+			s.repararEnSegundoPlano(h, p.Template)
+		}
+		return mc, err
 	})
 	if err != nil {
 		return nil, nil, err
