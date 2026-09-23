@@ -1,47 +1,43 @@
 #!/usr/bin/env bash
-# End-to-end test of kindling-operator against a REAL Kubernetes cluster (k3s
-# or any other conformant cluster), talking to a real kindling-sandbox
-# frontal.
+# Test end-to-end del kindling-operator contra un cluster REAL de Kubernetes (k3s
+# u otro cluster conformante), comunicándose con un frontal real de kindling-sandbox.
 #
-# Everything under internal/operator is unit-tested against a FAKE
-# Kubernetes API (see internal/operator/controller_test.go): that's fast and
-# covers the reconcile logic, but it can't catch what only a real API server
-# does differently — CRD schema validation (oneOf), Table conversion for
-# `kubectl get` (additionalPrinterColumns), watch semantics across a real
-# apiserver restart, or RBAC actually being enforced. This script covers
-# that gap, the same way scripts/90-e2e.sh covers the frontal against a real
-# kindling daemon instead of a fake one.
+# Todo en internal/operator se testea unitariamente contra una API de Kubernetes FALSA
+# (ver internal/operator/controller_test.go): eso es rápido y cubre la lógica de
+# reconciliación, pero no puede detectar lo que solo hace diferente un servidor API real:
+# validación de esquema CRD (oneOf), conversión Table para `kubectl get`
+# (additionalPrinterColumns), semántica de watch a través de un reinicio real del apiserver,
+# o RBAC siendo realmente ejecutado. Este script cubre esa brecha, de la misma forma que
+# scripts/90-e2e.sh cubre el frontal contra un daemon real de kindling en lugar de uno falso.
 #
-# Required:
-#   KUBECONFIG            kubectl context for the target cluster
+# Requerido:
+#   KUBECONFIG            contexto kubectl para el cluster objetivo
 #
-# Optional:
-#   KLING_SANDBOX_URL     an already-running frontal to test against. If
-#   KLING_SANDBOX_TOKEN   unset, this script starts its own (bound to
-#                         HOST_IP, not 127.0.0.1, so pods in the cluster can
-#                         reach it) and owns its lifecycle, which lets it
-#                         also cover "frontal down and recovers". Given an
-#                         external frontal, that one check is skipped: this
-#                         script never kills a frontal it didn't start.
-#   HOST_IP               address to bind its own frontal to (default: the
-#                         first non-loopback IPv4 address found)
-#   IMAGE                 kindling image for the image-variant Sandbox and
-#                         the template's base (default: toolchain)
-#   NAMESPACE             namespace for the test Sandboxes (default: default)
-#   KLING_SANDBOX         path to a prebuilt kling-sandbox binary. Without
-#   KINDLING_OPERATOR     it (or KINDLING_OPERATOR) this script builds one
-#                         with `go build`, which needs Go on this machine —
-#                         set both if you're running this on a host that
-#                         only has the cross-compiled binaries (see the repo
-#                         root README: no Go on the kindling lab VM).
-#   KEEP=1                don't clean up on exit (for inspecting by hand)
+# Opcional:
+#   KLING_SANDBOX_URL     un frontal ya ejecutándose para testear. Si no está
+#   KLING_SANDBOX_TOKEN   configurado, este script inicia el suyo propio (vinculado a
+#                         HOST_IP, no 127.0.0.1, para que los pods en el cluster puedan
+#                         alcanzarlo) y posee su ciclo de vida, lo que permite también
+#                         cubrir "frontal caído y se recupera". Dado un frontal externo,
+#                         ese check se salta: este script nunca mata un frontal que no
+#                         haya iniciado.
+#   HOST_IP               dirección para vincular su propio frontal (default: la primera
+#                         dirección IPv4 no-loopback encontrada)
+#   IMAGE                 imagen kindling para el Sandbox de variante imagen y la base
+#                         de la plantilla (default: toolchain)
+#   NAMESPACE             namespace para los Sandboxes de test (default: default)
+#   KLING_SANDBOX         ruta a un binario kling-sandbox prebuild. Sin este (o
+#   KINDLING_OPERATOR     KINDLING_OPERATOR) este script construye uno con `go build`,
+#                         que necesita Go en esta máquina — configurar ambos si se está
+#                         ejecutando en un host que solo tiene los binarios cross-compiled
+#                         (ver README en la raíz del repo: sin Go en la VM del lab kindling).
+#   KEEP=1                no limpiar al salir (para inspeccionar manualmente)
 #
-# The operator itself never runs as a Pod here: no Docker is assumed on this
-# machine, so it runs out-of-cluster against `kubectl proxy`, exactly the
-# way docs/kubernetes.md documents for testing outside a cluster. Both
-# binaries are pure HTTP clients (Kubernetes API + frontal API), so this
-# script can run anywhere with network access to both — it doesn't need to
-# run on a cluster node.
+# El operator en sí nunca corre como Pod aquí: no se asume Docker en esta máquina,
+# así que corre fuera del cluster contra `kubectl proxy`, exactamente como documenta
+# docs/kubernetes.md para testear fuera de un cluster. Ambos binarios son clientes HTTP
+# puros (API de Kubernetes + API del frontal), por lo que este script puede correr en
+# cualquier lugar con acceso de red a ambos — no necesita correr en un nodo del cluster.
 set -uo pipefail
 
 KUBECONFIG="${KUBECONFIG:?set KUBECONFIG to the target cluster}"
@@ -60,12 +56,11 @@ bad()  { printf "  \033[31mFAIL\033[0m  %s\n     expected: %s\n     got:      %s
 skip() { printf "  \033[33mskip\033[0m  %s (%s)\n" "$1" "$2"; }
 step() { printf "\n\033[1m%s\033[0m\n" "$1"; }
 
-# contains checks a substring WITHOUT a pipeline: with `set -o pipefail`,
-# `x | grep -q y` can fail the whole pipeline on SIGPIPE from grep exiting
-# early even when the text was there, and `cmd | grep -q y || echo bad`
-# prints twice if cmd itself also fails on its own. Every check here reads
-# its output into a variable first and inspects it after, never chains a
-# pipeline into `||`.
+# contains verifica una subcadena SIN un pipeline: con `set -o pipefail`,
+# `x | grep -q y` puede fallar todo el pipeline en SIGPIPE de grep saliendo temprano
+# incluso cuando el texto estaba allí, y `cmd | grep -q y || echo bad` imprime dos veces
+# si cmd también falla por su cuenta. Cada check aquí lee su salida en una variable
+# primero e la inspecciona después, nunca encadena un pipeline en `||`.
 contains() { case "$1" in *"$2"*) return 0;; *) return 1;; esac; }
 
 need() { command -v "$1" >/dev/null || { echo "missing $1" >&2; exit 1; }; }
@@ -100,10 +95,10 @@ cleanup() {
   for sb in "$SB_IMAGE" "$SB_TEMPLATE" "$SB_RESTART"; do
     kubectl delete sandbox "$sb" -n "$NAMESPACE" --ignore-not-found=true --timeout=15s >/dev/null 2>&1
   done
-  [ -n "$OPERATOR_PID" ] && kill "$OPERATOR_PID" >/dev/null 2>&1
-  [ -n "$PROXY_PID" ] && kill "$PROXY_PID" >/dev/null 2>&1
+  [ -n "$OPERATOR_PID" ] && { kill "$OPERATOR_PID"; wait "$OPERATOR_PID"; } >/dev/null 2>&1
+  [ -n "$PROXY_PID" ] && { kill "$PROXY_PID"; wait "$PROXY_PID"; } >/dev/null 2>&1
   if [ "$SELF_FRONTAL" = "1" ]; then
-    [ -n "$FRONTAL_PID" ] && kill "$FRONTAL_PID" >/dev/null 2>&1
+    [ -n "$FRONTAL_PID" ] && { kill "$FRONTAL_PID"; wait "$FRONTAL_PID"; } >/dev/null 2>&1
     KLING_SANDBOX_URL="$FRONTAL_URL" KLING_SANDBOX_TOKEN="$FRONTAL_TOKEN" \
       "$KLING_SANDBOX" sbx template rm "$TPL" >/dev/null 2>&1
   fi
@@ -111,7 +106,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# ── 0. binaries ──────────────────────────────────────────────────────────
+# ── 0. binarios ──────────────────────────────────────────────────────────
 step "0. kling-sandbox and kindling-operator"
 if [ -n "$KLING_SANDBOX" ] && [ -n "$KINDLING_OPERATOR" ]; then
   ok "using the given binaries: $KLING_SANDBOX, $KINDLING_OPERATOR"
@@ -130,7 +125,7 @@ else
   fi
 fi
 
-# ── 1. the cluster ───────────────────────────────────────────────────────
+# ── 1. el cluster ────────────────────────────────────────────────────────
 step "1. Cluster ($KUBECONFIG)"
 out=$(kubectl version 2>&1)
 if contains "$out" "Server Version"; then
@@ -149,14 +144,14 @@ else
   bad "kubectl apply" "success" "$out"
   exit 1
 fi
-# additionalPrinterColumns need the CRD's Table conversion to be ready;
-# usually instant, but a freshly-applied CRD can lag a beat.
+# additionalPrinterColumns necesita que la conversión Table del CRD esté lista;
+# usualmente instantáneo, pero un CRD recién aplicado puede tener un pequeño lag.
 for _ in $(seq 1 30); do
   kubectl get sandboxes.sandbox.kindling.dev -A >/dev/null 2>&1 && break
   sleep 0.5
 done
 
-# ── 3. the frontal ───────────────────────────────────────────────────────
+# ── 3. el frontal ────────────────────────────────────────────────────────
 step "3. Frontal"
 if [ -n "$GIVEN_URL" ] && [ -n "$GIVEN_TOKEN" ]; then
   FRONTAL_URL="$GIVEN_URL"
@@ -165,15 +160,14 @@ if [ -n "$GIVEN_URL" ] && [ -n "$GIVEN_TOKEN" ]; then
   ok "using the given frontal: $FRONTAL_URL"
 else
   if [ -z "$HOST_IP" ]; then
-    # The source address for the DEFAULT route, not just "any global address
-    # that isn't loopback": on a host running kindling itself (like the lab
-    # this was built against), `ip addr` lists a 172.30.x.x veth per running
-    # microVM ahead of the real NIC, and those come and go with the sandbox
-    # that owns them — binding to one would work today and go stale the
-    # moment that particular microVM is reaped. Routing to a real external
-    # address only ever picks the actual uplink (eth0 here), never a
-    # CNI/veth-only interface, so its `src` is the one address that's both
-    # stable and reachable from pods.
+    # La dirección fuente para la ruta DEFAULT, no solo "cualquier dirección global
+    # que no sea loopback": en un host corriendo kindling mismo (como el lab para el que
+    # se construyó esto), `ip addr` lista una veth 172.30.x.x por cada microVM en ejecución
+    # delante del NIC real, y esas van y vienen con el sandbox que las posee — vincular a una
+    # funcionaría hoy y se haría stale en el momento que esa microVM particular sea recolectada.
+    # Enrutamiento a una dirección externa real siempre elige el uplink real (eth0 aquí),
+    # nunca una interfaz solo CNI/veth, así que su `src` es la una dirección que es tanto
+    # estable como alcanzable desde pods.
     HOST_IP=$(ip route get 8.8.8.8 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p' | head -1)
   fi
   if [ -z "$HOST_IP" ]; then
@@ -203,8 +197,8 @@ fi
 
 sbx() { KLING_SANDBOX_URL="$FRONTAL_URL" KLING_SANDBOX_TOKEN="$FRONTAL_TOKEN" "$KLING_SANDBOX" sbx "$@"; }
 
-# A template for the template-variant Sandbox below; a trivial one-step
-# build is enough, we're exercising the operator, not the template builder.
+# Una plantilla para el Sandbox de variante plantilla abajo; una construcción
+# trivial de un paso es suficiente, estamos ejercitando al operator, no al template builder.
 cat > "$TMP/tpl.json" <<JSON
 {"name": "$TPL", "image": "$IMAGE", "pool": 1, "steps": [{"cmd": ["true"]}]}
 JSON
@@ -216,12 +210,11 @@ else
   exit 1
 fi
 
-# The operator itself runs out-of-cluster below (no Docker assumed on this
-# machine), so it never needs to reach the frontal from inside a Pod. But
-# the frontal's OWN job is to be reachable from wherever a real
-# in-cluster deployment would run it from (see deploy/deployment.yaml,
-# KLING_SANDBOX_URL), so a pod that can't reach it would be a real
-# regression even though nothing else here would catch it.
+# El operator mismo corre fuera del cluster abajo (no se asume Docker en esta máquina),
+# así que nunca necesita alcanzar el frontal desde dentro de un Pod. Pero el PROPIO trabajo
+# del frontal es ser alcanzable desde donde un deployment in-cluster real lo ejecutaría
+# (ver deploy/deployment.yaml, KLING_SANDBOX_URL), así que un pod que no puede alcanzarlo
+# sería una regresión real incluso aunque nada más aquí lo atrapara.
 if [ "$SELF_FRONTAL" = "1" ]; then
   out=$(kubectl run "e2e-k8s-reach-$$" --rm -i --restart=Never --image=busybox:1.36 \
     --command -- wget -T5 -qO- "$FRONTAL_URL/v1/health" 2>&1)
@@ -229,7 +222,7 @@ if [ "$SELF_FRONTAL" = "1" ]; then
     || bad "pod reachability" "a pod to read {\"ok\":true} from $FRONTAL_URL/v1/health" "$out"
 fi
 
-# ── 4. secret + operator out-of-cluster (kubectl proxy) ─────────────────
+# ── 4. secret + operator fuera del cluster (kubectl proxy) ───────────────
 step "4. kindling-operator against \`kubectl proxy\`"
 kubectl create namespace kindling-system --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl create secret generic kindling-operator-frontal -n kindling-system \
@@ -266,7 +259,7 @@ else
 fi
 
 wait_status() {
-  # wait_status NAME FIELD DEADLINE_SECONDS — polls status.$FIELD until non-empty.
+  # wait_status NAME FIELD DEADLINE_SECONDS — sondea status.$FIELD hasta que no esté vacío.
   local name=$1 field=$2 deadline=$3 out=""
   for _ in $(seq 1 $((deadline * 5))); do
     out=$(kubectl get sandbox "$name" -n "$NAMESPACE" -o jsonpath="{.status.$field}" 2>/dev/null)
@@ -277,7 +270,7 @@ wait_status() {
   return 1
 }
 
-# ── 5. image variant ──────────────────────────────────────────────────────
+# ── 5. variante imagen ────────────────────────────────────────────────────
 step "5. Sandbox (image: $IMAGE)"
 cat > "$TMP/sb-image.yaml" <<YAML
 apiVersion: sandbox.kindling.dev/v1alpha1
@@ -304,7 +297,7 @@ expires=$(kubectl get sandbox "$SB_IMAGE" -n "$NAMESPACE" -o jsonpath='{.status.
   ok "status.host=$host state=running status.expiresAt set" || \
   bad "image Sandbox status" "host set, state=running, expiresAt set" "host=$host state=$state expiresAt=$expires"
 
-# ── 6. printer columns ────────────────────────────────────────────────────
+# ── 6. columnas de impresión ───────────────────────────────────────────────
 step "6. Printer columns (kubectl get)"
 out=$(kubectl get sandbox "$SB_IMAGE" -n "$NAMESPACE" 2>&1)
 if contains "$out" "<invalid>"; then
@@ -314,7 +307,7 @@ else
   echo "        always reads as '<invalid>' for a FUTURE timestamp — see deploy/crd.yaml)"
 fi
 
-# ── 7. template variant ───────────────────────────────────────────────────
+# ── 7. variante plantilla ─────────────────────────────────────────────────
 step "7. Sandbox (template: $TPL)"
 cat > "$TMP/sb-template.yaml" <<YAML
 apiVersion: sandbox.kindling.dev/v1alpha1
@@ -331,7 +324,7 @@ kubectl apply -f "$TMP/sb-template.yaml" >/dev/null
 tid=$(wait_status "$SB_TEMPLATE" id 15)
 [ -n "$tid" ] && ok "status.id set: $tid" || bad "template Sandbox" "a non-empty status.id" "(empty after 15s)"
 
-# ── 8. exec through the frontal, using status.id ──────────────────────────
+# ── 8. exec a través del frontal, usando status.id ────────────────────────
 step "8. Exec via the frontal API (status.id)"
 if [ -n "$tid" ]; then
   out=$(sbx exec "$tid" -- sh -c 'echo exec-ok-93-e2e' 2>&1)
@@ -341,7 +334,7 @@ else
   skip "exec" "no status.id from step 7"
 fi
 
-# ── 9. ttlSeconds change renews ───────────────────────────────────────────
+# ── 9. cambio ttlSeconds renueva ──────────────────────────────────────────
 step "9. spec.ttlSeconds change renews"
 before=$(kubectl get sandbox "$SB_TEMPLATE" -n "$NAMESPACE" -o jsonpath='{.status.expiresAt}')
 kubectl patch sandbox "$SB_TEMPLATE" -n "$NAMESPACE" --type=merge -p '{"spec":{"ttlSeconds":3600}}' >/dev/null
@@ -359,7 +352,7 @@ else
   bad "renew" "observedGeneration to catch up and expiresAt to change" "generation stayed at $gens, expiresAt $before -> $after"
 fi
 
-# ── 10. kubectl delete: finalizer cleans up at the frontal ───────────────
+# ── 10. kubectl delete: finalizer limpia en el frontal ────────────────
 step "10. kubectl delete removes the finalizer and the sandbox at the frontal"
 kubectl delete sandbox "$SB_IMAGE" -n "$NAMESPACE" --timeout=15s >/dev/null 2>&1
 gone_k8s=0
@@ -375,7 +368,7 @@ fi
 code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $FRONTAL_TOKEN" "$FRONTAL_URL/v1/sandboxes/$id")
 [ "$code" = "404" ] && ok "sandbox gone from the frontal too (404)" || bad "frontal after delete" "404" "$code"
 
-# ── 11. deleted behind the operator's back → gone, no recreation ─────────
+# ── 11. eliminado detrás de la espalda del operator → gone, sin recreación ──
 step "11. Deleted at the frontal directly: state becomes gone, no recreation"
 curl -s -o /dev/null -X DELETE -H "Authorization: Bearer $FRONTAL_TOKEN" "$FRONTAL_URL/v1/sandboxes/$tid" >/dev/null
 became_gone=0
@@ -391,7 +384,7 @@ else
   bad "gone detection" "state=gone with the same id ($tid)" "state=$st id=$still_same_id"
 fi
 
-# ── 12. restart the operator: no duplicate creation ───────────────────────
+# ── 12. reiniciar operator: sin creación duplicada ──────────────────────
 step "12. Restarting the operator process: no duplicate at the frontal"
 cat > "$TMP/sb-restart.yaml" <<YAML
 apiVersion: sandbox.kindling.dev/v1alpha1
@@ -426,7 +419,7 @@ else
   bad "restart" "the same sandbox count before and after ($before_count)" "$after_count, or the operator failed to come back"
 fi
 
-# ── 13. frontal down and recovers ─────────────────────────────────────────
+# ── 13. frontal caído y se recupera ────────────────────────────────────
 step "13. Frontal down: status.message set, then clears on recovery"
 if [ "$SELF_FRONTAL" != "1" ]; then
   skip "frontal down/up" "using an externally-given frontal; this script never stops one it didn't start"
@@ -477,7 +470,7 @@ else
   fi
 fi
 
-# ── 14. watch interruption: reconnects ────────────────────────────────────
+# ── 14. watch interruption: se reconecta ──────────────────────────────────
 step "14. Watch interruption (kubectl proxy restart): the operator reconnects"
 kill "$PROXY_PID" >/dev/null 2>&1
 wait "$PROXY_PID" 2>/dev/null
@@ -491,8 +484,8 @@ done
 if [ "$listo" != "1" ]; then
   bad "proxy restart" "listening again" "did not come back"
 else
-  # Prove the operator is still reconciling through the new proxy, not just
-  # that its process survived: a fresh ttlSeconds change has to land.
+  # Probar que el operator sigue reconciliando a través del nuevo proxy, no solo
+  # que su proceso sobrevivió: un cambio fresco de ttlSeconds tiene que llegar.
   kubectl patch sandbox "$SB_RESTART" -n "$NAMESPACE" --type=merge -p '{"spec":{"ttlSeconds":800}}' >/dev/null
   recovered=0
   for _ in $(seq 1 60); do
@@ -505,7 +498,7 @@ else
     || bad "watch reconnect" "a later spec change to still be reconciled" "observedGeneration stuck at $g1 (want $g2)"
 fi
 
-# ── 15. invalid spec rejected by the CRD ──────────────────────────────────
+# ── 15. spec inválido rechazado por el CRD ────────────────────────────────
 step "15. Invalid spec (template AND image together)"
 cat > "$TMP/sb-invalid.yaml" <<YAML
 apiVersion: sandbox.kindling.dev/v1alpha1
@@ -527,7 +520,7 @@ else
   kubectl delete -f "$TMP/sb-invalid.yaml" --ignore-not-found=true >/dev/null 2>&1
 fi
 
-# ── 16. RBAC: least privilege, no forbidden errors ────────────────────────
+# ── 16. RBAC: mínimo privilegio, sin errores de forbidden ────────────────
 step "16. RBAC (no forbidden in the operator's logs)"
 logs=$(cat "$TMP/operator.log" "$TMP/operator2.log" 2>/dev/null)
 if contains "$logs" "forbidden" || contains "$logs" "Forbidden"; then
@@ -536,6 +529,6 @@ else
   ok "no forbidden errors: deploy/rbac.yaml's ClusterRole is enough for everything exercised above"
 fi
 
-# ── summary ────────────────────────────────────────────────────────────────
+# ── resumen ────────────────────────────────────────────────────────────────
 printf "\n\033[1m%d ok · %d fail(s)\033[0m\n" "$pass" "$fail"
 [ "$fail" -eq 0 ] || exit 1
