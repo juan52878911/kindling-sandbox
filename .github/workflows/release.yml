@@ -61,7 +61,7 @@ jobs:
             seen { print }
           ' CHANGELOG.md > notes.md
           if [ ! -s notes.md ]; then
-            printf '## %s\n\n```sh\ncurl -fsSL https://raw.githubusercontent.com/juan52878911/kindling-sandbox/main/README.md | sh\n```\n' "$VERSION" > notes.md
+            printf '## %s\n\nBinarios de kling-sandbox. Instalación: ver el README.\n' "$VERSION" > notes.md
           fi
 
       - uses: softprops/action-gh-release@v2
