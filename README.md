@@ -16,9 +16,16 @@ esto es lo que el núcleo no debe llevar:
   receta y no un artefacto porque los snapshots están atados a su host: un
   reinicio los invalida y hay que poder rehacerlos sin que nadie recuerde nada.
 - **Inquilinos con cuota y propiedad.** Cada token es un inquilino, con un tope de
-  sandboxes vivos, y solo ve los suyos.
+  sandboxes vivos y de sesiones de shell abiertas, y solo ve los suyos.
 - **Varios hosts.** kindling es de un host. El reparto entre daemons vive aquí:
-  se elige por hueco libre y se reintenta en otro cuando uno dice que no cabe.
+  se elige por hueco libre y se reintenta en otro cuando uno dice que no cabe
+  o cuando su dorado quedó invalidado por un reinicio (ver más abajo).
+- **Autocuración tras un reinicio del host.** Un reinicio invalida los
+  snapshots dorados de kindling; el frontal lo detecta, reconstruye la
+  plantilla en segundo plano con la receta que quedó anotada en el propio
+  snapshot, y mientras tanto sirve desde cualquier otro host sano.
+- **Métricas de Prometheus** (`GET /v1/metrics`) y catálogo de plantillas
+  (`GET /v1/templates`), las dos detrás del mismo token que el resto de la API.
 
 No es aislamiento entre inquilinos: comparten daemon y host. Es reparto y
 contabilidad. Quien necesite aislamiento fuerte, hosts separados.
@@ -53,8 +60,23 @@ kling sbx rm <id>
 kling sbx hosts       # qué daemons hay detrás y cuánto les queda
 ```
 
+Inquilinos, con sus cuotas, se dan de alta por entorno antes de arrancar el
+gateway:
+
+```sh
+export KLING_SANDBOX_TENANTS="ana:tok1:10:5,bob:tok2:5"   # nombre:token[:max sandboxes[:max shells]]
+kling sbx gateway
+```
+
+Y lo que ve un operador, con cualquier token:
+
+```sh
+curl -H "Authorization: Bearer $TOK" http://gateway:8090/v1/metrics    # Prometheus
+curl -H "Authorization: Bearer $TOK" http://gateway:8090/v1/templates  # qué hay construido, y dónde
+```
+
 ## Compatibilidad
 
 | kindling-sandbox | kindling |
 |---|---|
-| v0.1.x | v0.7.x |
+| v0.1.x, v0.2.x | v0.7.x |
