@@ -75,6 +75,15 @@ curl -H "Authorization: Bearer $TOK" http://gateway:8090/v1/metrics    # Prometh
 curl -H "Authorization: Bearer $TOK" http://gateway:8090/v1/templates  # qué hay construido, y dónde
 ```
 
+## Kubernetes
+
+`kindling-operator` (`cmd/kindling-operator`) deja pedir sandboxes con
+`kubectl apply` en vez de con el CLI: un CRD `Sandbox` declara qué se quiere,
+y un operador fino y sin dependencias externas lo crea, lo mantiene y lo
+borra hablando con este mismo frontal por HTTP. Las microVMs siguen sin vivir
+dentro de ningún clúster; Kubernetes solo hace de plano de control. Ver
+[`docs/kubernetes.md`](docs/kubernetes.md).
+
 ## Compatibilidad
 
 | kindling-sandbox | kindling |

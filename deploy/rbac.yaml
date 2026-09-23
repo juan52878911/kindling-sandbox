@@ -1,0 +1,38 @@
+# Identidad y permisos mínimos del operador: lee y escribe Sandbox (y su
+# subrecurso status) en todos los namespaces del clúster, y nada más. No
+# necesita permiso sobre pods, nodos ni ningún otro recurso: las microVMs no
+# viven en el clúster, así que el operador no crea ni mira nada de eso.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kindling-operator
+  namespace: kindling-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kindling-operator
+rules:
+  - apiGroups: ["sandbox.kindling.dev"]
+    resources: ["sandboxes"]
+    # get/list/watch para el bucle; update/patch para el finalizer.
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["sandbox.kindling.dev"]
+    resources: ["sandboxes/status"]
+    verbs: ["get", "update", "patch"]
+---
+# ClusterRoleBinding y no uno por namespace: el operador vigila TODOS los
+# namespaces con un único watch cluster-wide (ver internal/operator/kube.go,
+# KubeClient.List/Watch), así que su permiso también tiene que serlo.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kindling-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kindling-operator
+subjects:
+  - kind: ServiceAccount
+    name: kindling-operator
+    namespace: kindling-system

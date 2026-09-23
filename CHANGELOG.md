@@ -47,6 +47,11 @@ autenticación, plantillas, inquilinos y varios hosts.
   dice que no cabe o que llegó a su tope de máquinas.
 - **`kling sbx shell`**: terminal interactiva dentro del sandbox a través del
   gateway, con el mismo protocolo de tramas que `kling shell`.
+- **`kindling-operator`**: operador fino de Kubernetes, sin dependencias
+  externas (habla el API de Kubernetes por HTTP a mano). Un CRD `Sandbox`
+  declara qué se quiere; el operador lo crea, renueva y borra contra este
+  frontal. Las microVMs siguen sin vivir en el clúster: Kubernetes es solo el
+  plano de control. Ver `docs/kubernetes.md`.
 - **Passthrough de exec, ficheros y shell** hasta la microVM, en streaming y con
   las tramas validadas por dirección.
 - Los sandboxes nacen sin red y durmiéndose al vencer; un segundo plazo
