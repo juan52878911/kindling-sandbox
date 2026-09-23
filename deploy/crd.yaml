@@ -1,0 +1,115 @@
+# CustomResourceDefinition del recurso Sandbox. Es namespaced: cada equipo o
+# entorno vive en su propio namespace, y las cuotas del frontal (por tenant)
+# siguen siendo la frontera real, no el namespace.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: sandboxes.sandbox.kindling.dev
+spec:
+  group: sandbox.kindling.dev
+  scope: Namespaced
+  names:
+    plural: sandboxes
+    singular: sandbox
+    kind: Sandbox
+    shortNames:
+      - sbx
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        # El operador escribe el estado por /status; kubectl edit o un
+        # `kubectl apply` de otro equipo nunca pueden pisarlo, y viceversa: el
+        # operador nunca toca spec.
+        status: {}
+      additionalPrinterColumns:
+        - name: Template
+          type: string
+          jsonPath: .spec.template
+        - name: State
+          type: string
+          jsonPath: .status.state
+        - name: Host
+          type: string
+          jsonPath: .status.host
+        - name: Expires
+          type: date
+          jsonPath: .status.expiresAt
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              description: >-
+                Lo que se quiere. Todo, salvo ttlSeconds, se fija al crear: el
+                frontal no permite cambiar red, memoria ni política de TTL de
+                un sandbox ya vivo (ver internal/frontal/sandboxes.go,
+                puedeReclamar). Cambiar esos campos no falla, pero tampoco
+                hace nada hasta que el sandbox se recree a mano.
+              properties:
+                template:
+                  type: string
+                  description: >-
+                    Plantilla ya construida en el frontal (kling sbx template
+                    apply). Alternativa a image; no se pueden dar las dos.
+                  pattern: '^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$'
+                image:
+                  type: string
+                  description: Imagen de kindling de la que arrancar, sin plantilla.
+                ttlSeconds:
+                  type: integer
+                  minimum: 1
+                  maximum: 86400
+                  description: >-
+                    Segundos sin uso antes de que on_ttl actúe. Es el único
+                    campo que se puede cambiar en caliente: el operador lo
+                    detecta y renueva contra el frontal sin recrear nada.
+                onTTL:
+                  type: string
+                  enum: [freeze, remove]
+                  description: 'freeze (por defecto): se congela y reanuda en ms. remove: se destruye.'
+                egress:
+                  type: string
+                  enum: [none, internet]
+                  description: >-
+                    Salida de red del sandbox. "allowlist" no está expuesto
+                    aquí porque pide una lista de dominios que este CRD no
+                    modela todavía; pedirlo sin dominios lo rechazará el
+                    frontal y quedará en status.message.
+                memMiB:
+                  type: integer
+                  minimum: 0
+                  description: 0 usa el valor por defecto del frontal.
+              oneOf:
+                - required: [template]
+                - required: [image]
+            status:
+              type: object
+              description: Lo observado. Solo lo escribe el operador, por /status.
+              properties:
+                id:
+                  type: string
+                  description: Id compuesto del frontal ("host/máquina").
+                host:
+                  type: string
+                state:
+                  type: string
+                  description: >-
+                    running, warm (los estados del frontal) o gone (el
+                    operador ya no lo encuentra en el frontal: lo borró la
+                    limpieza por abandono, o alguien a mano).
+                expiresAt:
+                  type: string
+                  format: date-time
+                message:
+                  type: string
+                  description: Último error, si lo hay. Vacío cuando todo va bien.
+                observedGeneration:
+                  type: integer
+                  format: int64

@@ -108,6 +108,18 @@ func TestIntentarReintentaCuandoNoCabeYNoCuandoEsOtraCosa(t *testing.T) {
 		t.Fatalf("con todos llenos: %v, quería ErrSinSitio", err)
 	}
 
+	// El disco casi lleno también se reintenta en otro host.
+	_, h, err = Intentar(context.Background(), reg, nil, func(ctx context.Context, h *Host) (string, error) {
+		if h.Nombre == "lleno" {
+			return "", &api.StatusError{Code: api.StatusDiskFull,
+				Message: "only 900 MiB of disk left under /var/lib/kindling (the minimum to start a machine is 2048 MiB)"}
+		}
+		return "ok", nil
+	})
+	if err != nil || h.Nombre != "libre" {
+		t.Fatalf("disco lleno: host %v, err %v; quería que acabara en 'libre'", h, err)
+	}
+
 	// Un error cualquiera NO se reintenta: repetirlo en otro host solo
 	// multiplica el mismo fallo, y el mensaje que llega es el bueno.
 	intentos := 0
@@ -117,6 +129,27 @@ func TestIntentarReintentaCuandoNoCabeYNoCuandoEsOtraCosa(t *testing.T) {
 	})
 	if intentos != 1 || err == nil {
 		t.Fatalf("intentos = %d, err = %v: un error normal no se reintenta", intentos, err)
+	}
+}
+
+// Un reinicio del host invalida sus dorados (el fallo de TSC que api.EsFalloTSC
+// reconoce), pero eso es DE ESE HOST: otro con el mismo snapshot bien puede
+// servir la petición, así que se reintenta igual que "no cabe".
+func TestIntentarReintentaConFalloDeTSC(t *testing.T) {
+	reg := Nuevo(map[string]string{
+		"roto": daemonFalso(t, 8192, true), // más hueco: se prueba primero
+		"sano": daemonFalso(t, 1024, true),
+	})
+	visitados := []string{}
+	got, h, err := Intentar(context.Background(), reg, nil, func(ctx context.Context, h *Host) (string, error) {
+		visitados = append(visitados, h.Nombre)
+		if h.Nombre == "roto" {
+			return "", errors.New("Could not set TSC scaling within the snapshot: Invalid argument (os error 22)")
+		}
+		return "hecho en " + h.Nombre, nil
+	})
+	if err != nil || got != "hecho en sano" || h.Nombre != "sano" {
+		t.Fatalf("got %q, host %v, err %v (visitados %v)", got, h, err, visitados)
 	}
 }
 

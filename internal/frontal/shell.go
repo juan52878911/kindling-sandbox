@@ -52,11 +52,22 @@ func (s *Servidor) handleShell(w http.ResponseWriter, r *http.Request, id string
 			return
 		}
 	}
-	h, mc, err := s.buscar(r.Context(), tenantDe(r), id)
+	t := tenantDe(r)
+	h, mc, err := s.buscar(r.Context(), t, id)
 	if err != nil {
 		fail(w, codigoBuscar(err), err)
 		return
 	}
+
+	// Cuota de shells abiertas. Se comprueba DESPUÉS de resolver el sandbox
+	// (así un id ajeno sigue dando 404 y no delata la cuota de otro) y ANTES de
+	// tocar el daemon: no hay por qué abrir una sesión que se va a rechazar.
+	if !s.shells.abrir(t.Nombre, t.MaxShells) {
+		fail(w, http.StatusTooManyRequests, fmt.Errorf(
+			"tenant %s already has %d shell session(s) open; the limit is %d", t.Nombre, s.shells.cuenta(t.Nombre), t.MaxShells))
+		return
+	}
+	defer s.shells.cerrar(t.Nombre)
 
 	// Primero el daemon y después el secuestro: mientras la respuesta siga
 	// siendo HTTP normal, un fallo se cuenta con un código y un mensaje. Tras

@@ -63,6 +63,11 @@ type Tenant struct {
 	// tope). MaxPorPlantilla acota lo mismo por plantilla.
 	MaxSandboxes    int
 	MaxPorPlantilla int
+	// MaxShells es cuántas sesiones de shell interactivas puede tener abiertas
+	// a la vez (0 = sin tope). Cuenta aparte de MaxSandboxes: una shell no es un
+	// sandbox nuevo, pero sí un proceso del daemon y una conexión que este
+	// frontal mantiene en pie, y ambos son un recurso que un tenant puede acaparar.
+	MaxShells int
 }
 
 // Opciones configura el frontal.
@@ -103,6 +108,18 @@ type Servidor struct {
 	// simultáneas pasarían todas la cuota.
 	mu      sync.Mutex
 	enVuelo map[string]int
+
+	// shells cuenta las sesiones de shell abiertas por tenant AHORA MISMO. Sirve
+	// dos propósitos con el mismo número: la cuota de Tenant.MaxShells y la
+	// métrica kling_sandbox_shell_sessions de /v1/metrics.
+	shells contadorTenant
+	// metricas acumula lo que /v1/metrics no puede sacar preguntando a los
+	// daemons: cuántas creaciones ha habido y de qué tipo, y cuánto tardaron.
+	metricas metricas
+	// reconstruir vigila qué (host, plantilla) se están reconstruyendo ahora
+	// mismo tras un fallo de TSC, para no lanzar la misma reconstrucción dos
+	// veces (ver reconstruir.go).
+	reconstruir reconstrucciones
 }
 
 // nombreValido acota nombres de tenant y de host: van en etiquetas y en ids
@@ -135,7 +152,7 @@ func Nuevo(o Opciones) (*Servidor, error) {
 		if t.Token == "" {
 			return nil, fmt.Errorf("tenant %q has an empty token", t.Nombre)
 		}
-		if t.MaxSandboxes < 0 || t.MaxPorPlantilla < 0 {
+		if t.MaxSandboxes < 0 || t.MaxPorPlantilla < 0 || t.MaxShells < 0 {
 			return nil, fmt.Errorf("tenant %q: limits can't be negative", t.Nombre)
 		}
 		tenants = append(tenants, t)
@@ -171,6 +188,12 @@ func (s *Servidor) rutas() {
 	m := http.NewServeMux()
 	m.HandleFunc("GET /v1/health", s.handleHealth)
 	m.Handle("GET /v1/hosts", s.auth(http.HandlerFunc(s.handleHosts)))
+	// Cualquier token de tenant vale para /v1/metrics y /v1/templates: no dan
+	// nada de OTROS tenants (métricas agregadas, catálogo de plantillas), y
+	// exigir un token distinto solo obligaría a repartir un segundo secreto sin
+	// ganar nada a cambio.
+	m.Handle("GET /v1/metrics", s.auth(http.HandlerFunc(s.handleMetrics)))
+	m.Handle("GET /v1/templates", s.auth(http.HandlerFunc(s.handleTemplates)))
 	m.Handle("POST /v1/sandboxes", s.auth(http.HandlerFunc(s.handleCrear)))
 	m.Handle("GET /v1/sandboxes", s.auth(http.HandlerFunc(s.handleListar)))
 	// Las rutas por sandbox se despachan a mano: el id lleva una barra dentro

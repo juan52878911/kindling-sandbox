@@ -163,10 +163,11 @@ func (r *Registro) Candidatos(ctx context.Context, sirve func(*Host) bool) []*Ho
 // Intentar prueba trabajo en los hosts que sirvan, en orden de hueco, y se queda
 // con el primero que acepte.
 //
-// Reintenta cuando el host dice que no cabe (507) o que llegó a su tope de
-// máquinas: son las dos negativas que OTRO host puede atender. Un error
-// cualquiera no se reintenta, porque repetirlo en otro sitio solo multiplica el
-// mismo fallo.
+// Reintenta cuando el host dice que no cabe (507), que llegó a su tope de
+// máquinas, o que el fallo es el de TSC que api.EsFalloTSC reconoce (un
+// reinicio del host invalidó su dorado): las tres son negativas que OTRO host
+// puede atender. Un error cualquiera no se reintenta, porque repetirlo en otro
+// sitio solo multiplica el mismo fallo.
 func Intentar[T any](ctx context.Context, r *Registro, sirve func(*Host) bool, trabajo func(context.Context, *Host) (T, error)) (T, *Host, error) {
 	var cero T
 	cands := r.Candidatos(ctx, sirve)
@@ -183,7 +184,9 @@ func Intentar[T any](ctx context.Context, r *Registro, sirve func(*Host) bool, t
 			return out, h, nil
 		}
 		ultimo = fmt.Errorf("%s: %w", h.Nombre, err)
-		if !api.IsInsufficientMemory(err) && !api.IsMachineLimit(err) {
+		// El disco casi lleno (503 desde kindling v0.8) también lo resuelve otro
+		// host: es falta de sitio, como la memoria, solo que de otro recurso.
+		if !api.IsInsufficientMemory(err) && !api.IsMachineLimit(err) && !api.EsFalloTSC(err) && !api.IsDiskFull(err) {
 			return cero, h, ultimo
 		}
 	}
